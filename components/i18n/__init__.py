@@ -271,7 +271,7 @@ def _gen_translations_cpp(locales_map: dict[str, dict[str, str]], default_locale
     # Public translation function
     parts.append("// Main translation function - returns translated string")
     parts.append("const char* tr(const char* key) {")
-    parts.append("  static char buf[256];  // Static buffer for translated string")
+    parts.append("  static thread_local char buf[256];") 
     parts.append("  i18n_get_buf_internal(current_loc, key, buf, sizeof(buf));")
     parts.append("  return buf;")
     parts.append("}\n")

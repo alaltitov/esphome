@@ -41,11 +41,19 @@ class I18nComponent : public Component {
   std::string get_current_locale();
 
   /**
-   * @brief Translate a key to current locale
+   * @brief Translate a key using CURRENT locale
    * @param key Translation key (e.g., "weather.cloudy")
    * @return Translated string
    */
   std::string translate(const std::string &key);
+
+  /**
+   * @brief Translate a key using SPECIFIC locale
+   * @param key Translation key
+   * @param locale Specific locale to use
+   * @return Translated string
+   */
+  std::string translate(const std::string &key, const std::string &locale);
 
  protected:
   std::string current_locale_;  ///< Currently active locale
@@ -107,3 +115,4 @@ extern I18nComponent *global_i18n_component;
 }  // namespace esphome
 
 #endif  // USE_I18N
+
