@@ -304,6 +304,8 @@ async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
 
+    cg.add(cg.App.register_component(var))
+    
     # Define for conditional compilation
     cg.add_define("USE_I18N")
 
