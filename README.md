@@ -85,7 +85,7 @@ weather:
 
 ```yaml
 i18n:
-  id: my_i18n
+  id: i18n_translations
   sources:
     - translations/en.yaml
     - translations/ru.yaml
@@ -135,7 +135,7 @@ lvgl:
 ```yaml
 i18n:
   # Component ID (required for automations)
-  id: my_i18n
+  id: i18n_translations
   
   # Translation source files (required)
   sources:
@@ -155,3 +155,79 @@ i18n:
 | `default_locale` | String | No | Default locale on boot|
 
 
+## 📚 API
+
+### Change locale:
+
+1. **Method 1: Via lambda**
+
+```yaml
+button:
+  - platform: template
+    name: "Switch to Russian"
+    on_press:
+      - lambda: |-
+          id(i18n_translations).set_current_locale("ru");
+
+```
+
+2. **Method 2: Via YAML action**
+
+```yaml
+button:
+  - platform: template
+    name: "Switch to English"
+    on_press:
+      - i18n.set_locale:
+          id: i18n_translations
+          locale: "en"
+
+```
+
+### Get Current Locale
+
+```yaml
+lambda: |-
+  std::string current = id(i18n_translations).get_current_locale();
+  ESP_LOGI("main", "Current language: %s", current.c_str());
+```
+
+### Get Translation
+
+1. **Simple translation:**
+
+```yaml
+text: !lambda |-
+  static std::string result;
+  result = id(i18n_translations).translate("weather.sunny");
+  return result.c_str();
+```
+
+2. **With dynamic key:**
+
+```yaml
+text: !lambda |-
+  std::string key = "weather." + id(weather_sensor).state;
+  
+  static std::string result;
+  result = id(i18n_translations).translate(key);
+  return result.c_str();
+```
+
+## 📋 API Methods Summary
+
+| Method | Description | Returns |
+|--------|-------------|---------|
+| `translate(key)` | Translate key using **current** locale | `std::string` |
+| `set_current_locale(locale)` | Change current language | `void` |
+| `get_current_locale()` | Get current language code | `std::string` |
+
+
+## 💝 Support the Project
+Made with ❤️ for the ESPHome community
+
+This project was made in my free time and if it was useful to you, you can support me if you find it necessary 😊:
+
+**ETH/USDT (ERC-20):** `0x9fF0E16a58229bEcdFDf47d9759f20bE77356994`
+
+Or just put ⭐ Thank you
