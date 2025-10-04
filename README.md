@@ -197,21 +197,25 @@ lambda: |-
 1. **Simple translation:**
 
 ```yaml
-text: !lambda |-
-  static std::string result;
-  result = id(i18n_translations).translate("weather.sunny");
-  return result.c_str();
+- lvgl.label.update:
+    id: some_id
+    text: !lambda |-
+      static std::string result;
+      result = id(i18n_translations).translate("weather.sunny");
+      return result.c_str();
 ```
 
 2. **With dynamic key:**
 
 ```yaml
-text: !lambda |-
-  std::string key = "weather." + id(weather_sensor).state;
-  
-  static std::string result;
-  result = id(i18n_translations).translate(key);
-  return result.c_str();
+- lvgl.label.update:
+    id: some_id
+    text: !lambda |-
+      std::string key = "weather." + id(weather_sensor).state;
+      
+      static std::string result;
+      result = id(i18n_translations).translate(key);
+      return result.c_str();
 ```
 
 ## 📋 API Methods Summary
