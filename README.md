@@ -108,7 +108,6 @@ lvgl:
             id: hello_lbl
             text: "TEST"
 
-
         - obj:
             align: center
             bg_color: color_blue
@@ -116,16 +115,32 @@ lvgl:
             height: 80
             widgets:
               - label:
+                  id: lang_btn_label
                   align: center
                   text_color: color_white
-                  text: "Change lang"
+                  text: "EN"
             on_press:
               then:
                 - lambda: |-
-                    const char* cur = esphome::lvgl_i18n::get_locale();
-                    const char* next = (cur && std::string(cur) == "ru") ? "en" : "ru";
-                    esphome::lvgl_i18n::set_locale(next);
-                    lv_label_set_text(id(hello_lbl), esphome::lvgl_i18n::tr("weather.cloudy"));
+                    std::string current = id(i18n_translations).get_current_locale();
+                    if (current == "ru") {
+                      id(i18n_translations).set_current_locale("en");
+                    } else {
+                      id(i18n_translations).set_current_locale("ru");
+                    }
+                    
+                    ESP_LOGI("main", "Locale switched to: %s", id(i18n_translations).get_current_locale().c_str());
+                    
+                - lvgl.label.update:
+                    id: hello_lbl
+                    text: !lambda |-
+                      return id(i18n_translations).translate("weather.cloudy");
+                      
+                - lvgl.label.update:
+                    id: lang_btn_label
+                    text: !lambda |-
+                      std::string current = id(i18n_translations).get_current_locale();
+                      return (current == "ru") ? "EN" : "RU";
 ```
 
 ## ⚙️ Configuration
@@ -188,8 +203,7 @@ button:
 
 ```yaml
 lambda: |-
-  std::string current = id(i18n_translations).get_current_locale();
-  ESP_LOGI("main", "Current language: %s", current.c_str());
+  ESP_LOGI("main", "Current locale: %s", id(i18n_translations).get_current_locale().c_str());
 ```
 
 ### Get Translation
@@ -200,9 +214,7 @@ lambda: |-
 - lvgl.label.update:
     id: some_id
     text: !lambda |-
-      static std::string result;
-      result = id(i18n_translations).translate("weather.sunny");
-      return result.c_str();
+      return id(i18n_translations).translate("weather.cloudy");
 ```
 
 2. **With dynamic key:**
@@ -211,11 +223,7 @@ lambda: |-
 - lvgl.label.update:
     id: some_id
     text: !lambda |-
-      std::string key = "weather." + id(weather_sensor).state;
-      
-      static std::string result;
-      result = id(i18n_translations).translate(key);
-      return result.c_str();
+      return id(i18n_translations).translate("weather." + id(weather_state_sensor_some_id).state));
 ```
 
 ## 📋 API Methods Summary
