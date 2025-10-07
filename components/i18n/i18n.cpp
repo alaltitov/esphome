@@ -45,7 +45,7 @@ void I18nComponent::set_current_locale(const std::string &locale) {
     
     // Update internal state FIRST
     this->current_locale_ = locale;
-    esphome::i18n::set_locale(locale.c_str());
+    esphome::i18n::set_locale(this->current_locale_.c_str());
     
     // Verify it was set correctly
     const char *new_locale = esphome::i18n::get_locale();
