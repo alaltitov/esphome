@@ -226,6 +226,49 @@ lambda: |-
       return id(i18n_translations).translate("weather." + id(weather_state_sensor_some_id).state));
 ```
 
+3. **With value:**
+
+```cpp
+ota:
+  - platform: esphome
+    password: !secret display_ota
+    on_progress: 
+      - lvgl.label.update:
+          id: ota_label
+          text: !lambda |-
+            static char buffer[64];
+            snprintf(buffer, sizeof(buffer), id(i18n_translations).translate("ota.progress").c_str(), x); 
+            // where "x" - value progress from OTA
+            return buffer;
+```
+
+4. **List translation:**
+
+LVGL ESPHome `roller` object example
+
+```cpp
+      - lambda: |-
+          lv_obj_t *roller_obj = id(backlight_settings_sleep_time_roller).obj;
+          if (roller_obj == nullptr) {
+            return;
+          }
+
+          uint16_t old_selection = lv_roller_get_selected(roller_obj);
+
+          std::string options = 
+            id(i18n_translations).translate("sleep_time.never") + "\n" +
+            id(i18n_translations).translate("sleep_time.minute1") + "\n" +
+            id(i18n_translations).translate("sleep_time.minute5") + "\n" +
+            id(i18n_translations).translate("sleep_time.minute10") + "\n" +
+            id(i18n_translations).translate("sleep_time.minute30") + "\n" +
+            id(i18n_translations).translate("sleep_time.hour1") + "\n" +
+            id(i18n_translations).translate("sleep_time.hour6") + "\n" +
+            id(i18n_translations).translate("sleep_time.hour12");
+
+          lv_roller_set_options(roller_obj, options.c_str(), LV_ROLLER_MODE_NORMAL);
+          lv_roller_set_selected(roller_obj, old_selection, LV_ANIM_OFF);
+```
+
 ## 📋 API Methods Summary
 
 | Method | Description | Returns |
