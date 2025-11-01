@@ -27,19 +27,17 @@ void I18nComponent::setup() {
   if (esphome::i18n::I18N_USE_PSRAM) {
     ESP_LOGCONFIG(TAG, "  Translation buffer allocated in PSRAM");
 #ifdef USE_ESP32
-    size_t free_psram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
-    ESP_LOGD(TAG, "  Free PSRAM after allocation: %zu bytes", free_psram);
+    multi_heap_info_t info;
+    heap_caps_get_info(&info, MALLOC_CAP_SPIRAM);
+    ESP_LOGD(TAG, "  PSRAM free after allocation: %d bytes", info.total_free_bytes);
 #endif
   } else {
     ESP_LOGCONFIG(TAG, "  Translation buffer allocated in standard RAM");
 #ifdef USE_ESP32
-    size_t free_heap = heap_caps_get_free_size(MALLOC_CAP_8BIT);
-    ESP_LOGD(TAG, "  Free heap after allocation: %zu bytes", free_heap);
+    ESP_LOGD(TAG, "  Free heap after allocation: %d bytes", esp_get_free_heap_size());
 #elif defined(USE_ESP8266)
-    uint32_t free_heap = system_get_free_heap_size();
-    ESP_LOGD(TAG, "  Free heap after allocation: %u bytes", free_heap);
+    ESP_LOGD(TAG, "  Free heap after allocation: %d bytes", system_get_free_heap_size());
 #elif defined(USE_RP2040)
-    // RP2040 doesn't have easy heap size API
     ESP_LOGD(TAG, "  Heap monitoring not available on RP2040");
 #endif
   }
@@ -80,29 +78,35 @@ void I18nComponent::dump_config() {
   // Memory diagnostics
   if (esphome::i18n::I18N_USE_PSRAM) {
 #ifdef USE_ESP32
-    size_t total_psram = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
-    size_t free_psram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
-    size_t used_psram = total_psram - free_psram;
+    multi_heap_info_t info;
+    heap_caps_get_info(&info, MALLOC_CAP_SPIRAM);
+    uint32_t total_psram = info.total_free_bytes + info.total_allocated_bytes;
+    uint32_t used_psram = info.total_allocated_bytes;
     
     ESP_LOGCONFIG(TAG, "  PSRAM statistics:");
-    ESP_LOGCONFIG(TAG, "    Total: %zu bytes", total_psram);
-    ESP_LOGCONFIG(TAG, "    Used: %zu bytes (%.1f%%)", used_psram, 
+    ESP_LOGCONFIG(TAG, "    Total: %d bytes", total_psram);
+    ESP_LOGCONFIG(TAG, "    Used: %d bytes (%.1f%%)", used_psram, 
                   (float)used_psram / total_psram * 100.0f);
-    ESP_LOGCONFIG(TAG, "    Free: %zu bytes (%.1f%%)", free_psram,
-                  (float)free_psram / total_psram * 100.0f);
+    ESP_LOGCONFIG(TAG, "    Free: %d bytes (%.1f%%)", info.total_free_bytes,
+                  (float)info.total_free_bytes / total_psram * 100.0f);
+    ESP_LOGCONFIG(TAG, "    Largest free block: %d bytes", info.largest_free_block);
 #else
     ESP_LOGCONFIG(TAG, "  PSRAM mode enabled but not on ESP32 platform");
 #endif
   } else {
     ESP_LOGCONFIG(TAG, "  Heap statistics:");
 #ifdef USE_ESP32
-    size_t free_heap = heap_caps_get_free_size(MALLOC_CAP_8BIT);
-    size_t largest_block = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
-    ESP_LOGCONFIG(TAG, "    Free heap: %zu bytes", free_heap);
-    ESP_LOGCONFIG(TAG, "    Largest free block: %zu bytes", largest_block);
+    ESP_LOGCONFIG(TAG, "    Free heap: %d bytes", esp_get_free_heap_size());
+    ESP_LOGCONFIG(TAG, "    Free internal heap: %d bytes", esp_get_free_internal_heap_size());
+    ESP_LOGCONFIG(TAG, "    Min free heap: %d bytes", esp_get_minimum_free_heap_size());
+    
+    multi_heap_info_t info;
+    heap_caps_get_info(&info, MALLOC_CAP_INTERNAL);
+    uint32_t total_sram = info.total_free_bytes + info.total_allocated_bytes;
+    ESP_LOGCONFIG(TAG, "    SRAM total: %d, free: %d, largest_free: %d", 
+                 total_sram, info.total_free_bytes, info.largest_free_block);
 #elif defined(USE_ESP8266)
-    uint32_t free_heap = system_get_free_heap_size();
-    ESP_LOGCONFIG(TAG, "    Free heap: %u bytes", free_heap);
+    ESP_LOGCONFIG(TAG, "    Free heap: %d bytes", system_get_free_heap_size());
 #elif defined(USE_RP2040)
     ESP_LOGCONFIG(TAG, "    Heap monitoring not available on RP2040");
 #else
@@ -221,4 +225,5 @@ std::string I18nComponent::translate(const std::string &key, const std::string &
 }  // namespace esphome
 
 #endif  // USE_I18N
+
 
