@@ -4,6 +4,7 @@
 
 #include "esphome/core/log.h"
 #include "esphome/core/application.h"
+#include "esphome/core/hal.h"
 #include <cstring>
 
 namespace esphome {
@@ -25,13 +26,22 @@ void I18nComponent::setup() {
   // Verify buffer allocation
   if (esphome::i18n::I18N_USE_PSRAM) {
     ESP_LOGCONFIG(TAG, "  Translation buffer allocated in PSRAM");
-#ifdef ESP32
+#ifdef USE_ESP32
     size_t free_psram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
     ESP_LOGD(TAG, "  Free PSRAM after allocation: %zu bytes", free_psram);
 #endif
   } else {
     ESP_LOGCONFIG(TAG, "  Translation buffer allocated in standard RAM");
-    ESP_LOGD(TAG, "  Free heap after allocation: %u bytes", ESP.getFreeHeap());
+#ifdef USE_ESP32
+    size_t free_heap = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+    ESP_LOGD(TAG, "  Free heap after allocation: %zu bytes", free_heap);
+#elif defined(USE_ESP8266)
+    uint32_t free_heap = system_get_free_heap_size();
+    ESP_LOGD(TAG, "  Free heap after allocation: %u bytes", free_heap);
+#elif defined(USE_RP2040)
+    // RP2040 doesn't have easy heap size API
+    ESP_LOGD(TAG, "  Heap monitoring not available on RP2040");
+#endif
   }
 
   // Set default locale
@@ -69,7 +79,7 @@ void I18nComponent::dump_config() {
 
   // Memory diagnostics
   if (esphome::i18n::I18N_USE_PSRAM) {
-#ifdef ESP32
+#ifdef USE_ESP32
     size_t total_psram = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
     size_t free_psram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
     size_t used_psram = total_psram - free_psram;
@@ -84,11 +94,19 @@ void I18nComponent::dump_config() {
     ESP_LOGCONFIG(TAG, "  PSRAM mode enabled but not on ESP32 platform");
 #endif
   } else {
-    uint32_t free_heap = ESP.getFreeHeap();
     ESP_LOGCONFIG(TAG, "  Heap statistics:");
+#ifdef USE_ESP32
+    size_t free_heap = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+    size_t largest_block = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+    ESP_LOGCONFIG(TAG, "    Free heap: %zu bytes", free_heap);
+    ESP_LOGCONFIG(TAG, "    Largest free block: %zu bytes", largest_block);
+#elif defined(USE_ESP8266)
+    uint32_t free_heap = system_get_free_heap_size();
     ESP_LOGCONFIG(TAG, "    Free heap: %u bytes", free_heap);
-#ifdef ESP32
-    ESP_LOGCONFIG(TAG, "    Largest free block: %u bytes", ESP.getMaxAllocHeap());
+#elif defined(USE_RP2040)
+    ESP_LOGCONFIG(TAG, "    Heap monitoring not available on RP2040");
+#else
+    ESP_LOGCONFIG(TAG, "    Heap monitoring not available on this platform");
 #endif
   }
 
@@ -168,7 +186,7 @@ std::string I18nComponent::translate(const std::string &key, const std::string &
 
   // Allocate in same memory type as main buffer
   if (esphome::i18n::I18N_USE_PSRAM) {
-#ifdef ESP32
+#ifdef USE_ESP32
     temp_buffer = (char *)heap_caps_malloc(buffer_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (temp_buffer == nullptr) {
       // Fallback to regular RAM
@@ -203,3 +221,4 @@ std::string I18nComponent::translate(const std::string &key, const std::string &
 }  // namespace esphome
 
 #endif  // USE_I18N
+
