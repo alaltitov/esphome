@@ -17,8 +17,21 @@ I18nComponent *global_i18n_component = nullptr;
 void I18nComponent::setup() {
   ESP_LOGCONFIG(TAG, "Setting up I18N component...");
 
+  ESP_LOGI(TAG, "Free heap BEFORE buffer allocation: %d bytes", esp_get_free_heap_size());
+  ESP_LOGI(TAG, "Free PSRAM BEFORE buffer allocation: %d bytes", 
+           heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+
   // Set global instance for automation actions
   global_i18n_component = this;
+  esphome::i18n::i18n_init_buffer();
+
+  ESP_LOGI(TAG, "Free heap AFTER buffer allocation: %d bytes", esp_get_free_heap_size());
+  ESP_LOGI(TAG, "Free PSRAM AFTER buffer allocation: %d bytes", 
+           heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+  
+  UBaseType_t stack_high_water = uxTaskGetStackHighWaterMark(NULL);
+  ESP_LOGI(TAG, "Stack high water mark: %d bytes", stack_high_water * sizeof(StackType_t));
+
 
   // Initialize translation buffer (allocates memory)
   esphome::i18n::i18n_init_buffer();
