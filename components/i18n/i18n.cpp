@@ -17,13 +17,14 @@ I18nComponent *global_i18n_component = nullptr;
 void I18nComponent::setup() {
   ESP_LOGCONFIG(TAG, "Setting up I18N component...");
 
-  UBaseType_t stack_high_water = uxTaskGetStackHighWaterMark(NULL);
-  ESP_LOGI(TAG, "Stack high water mark BEFORE: %d bytes", stack_high_water * sizeof(StackType_t));
+  // UBaseType_t stack_high_water = uxTaskGetStackHighWaterMark(NULL);
+  // ESP_LOGI(TAG, "Stack high water mark BEFORE: %d bytes", stack_high_water * sizeof(StackType_t));
+
   // Set global instance for automation actions
   global_i18n_component = this;
   esphome::i18n::i18n_init_buffer();
 
-  ESP_LOGI(TAG, "Stack high water mark AFTER: %d bytes", stack_high_water * sizeof(StackType_t));
+  // ESP_LOGI(TAG, "Stack high water mark AFTER: %d bytes", stack_high_water * sizeof(StackType_t));
 
   // Verify buffer allocation
   if (esphome::i18n::I18N_USE_PSRAM) {
