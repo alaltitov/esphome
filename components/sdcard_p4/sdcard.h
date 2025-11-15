@@ -6,17 +6,10 @@
 #include <vector>
 #include <string>
 
-#ifdef ESP_PLATFORM
-#include "esp_vfs_fat.h"
-#include "sdmmc_cmd.h"
-#include "driver/sdmmc_host.h"
-#include "ff.h"
-#endif
-
 namespace esphome {
 namespace sd_card_esp32p4 {
 
-enum BusWidth : uint8_t {
+enum class BusWidth : uint8_t {
   BUS_WIDTH_1 = 1,
   BUS_WIDTH_4 = 4,
 };
@@ -25,6 +18,7 @@ struct FileInfo {
   std::string name;
   size_t size;
   bool is_directory;
+  time_t modified_time;
 };
 
 class SDCardComponent : public Component {
@@ -32,63 +26,88 @@ class SDCardComponent : public Component {
   void setup() override;
   void loop() override;
   void dump_config() override;
-  float get_setup_priority() const override { return setup_priority::DATA; }
+  float get_setup_priority() const override { return setup_priority::BUS; }
 
-  // Настройка пинов для SDMMC режима
-  void set_clk_pin(GPIOPin *clk_pin) { clk_pin_ = clk_pin; }
-  void set_cmd_pin(GPIOPin *cmd_pin) { cmd_pin_ = cmd_pin; }
-  void set_data0_pin(GPIOPin *data0_pin) { data0_pin_ = data0_pin; }
-  void set_data1_pin(GPIOPin *data1_pin) { data1_pin_ = data1_pin; }
-  void set_data2_pin(GPIOPin *data2_pin) { data2_pin_ = data2_pin; }
-  void set_data3_pin(GPIOPin *data3_pin) { data3_pin_ = data3_pin; }
-  
-  void set_mount_point(const std::string &mount_point) { mount_point_ = mount_point; }
-  void set_bus_width(uint8_t width) { bus_width_ = width; }
-  void set_max_freq_khz(uint32_t freq) { max_freq_khz_ = freq; }
+  // Сеттеры для пинов
+  void set_clk_pin(InternalGPIOPin *pin) { this->clk_pin_ = pin; }
+  void set_cmd_pin(InternalGPIOPin *pin) { this->cmd_pin_ = pin; }
+  void set_data0_pin(InternalGPIOPin *pin) { this->data0_pin_ = pin; }
+  void set_data1_pin(InternalGPIOPin *pin) { this->data1_pin_ = pin; }
+  void set_data2_pin(InternalGPIOPin *pin) { this->data2_pin_ = pin; }
+  void set_data3_pin(InternalGPIOPin *pin) { this->data3_pin_ = pin; }
 
-  // Основные функции работы с файлами
-  bool file_exists(const char *path);
-  bool read_file(const char *path, std::vector<uint8_t> &data);
-  bool read_file_chunked(const char *path, std::function<bool(const uint8_t*, size_t)> callback, size_t chunk_size = 4096);
-  bool write_file(const char *path, const uint8_t *data, size_t length);
-  bool append_file(const char *path, const uint8_t *data, size_t length);
-  bool delete_file(const char *path);
-  bool rename_file(const char *old_path, const char *new_path);
-  bool create_directory(const char *path);
-  bool list_directory(const char *path, std::vector<FileInfo> &files);
-  size_t get_file_size(const char *path);
+  // Сеттеры для настроек
+  void set_mount_point(const std::string &mount_point) { this->mount_point_ = mount_point; }
+  void set_bus_width(uint8_t bus_width) { this->bus_width_ = static_cast<BusWidth>(bus_width); }
+  void set_max_freq_khz(uint32_t max_freq_khz) { this->max_freq_khz_ = max_freq_khz; }
+
+  // Базовые методы
+  bool is_mounted() const { return this->is_mounted_; }
+  std::string get_mount_point() const { return this->mount_point_; }
   
-  // Функции для работы с медиа
-  bool read_image(const char *path, std::vector<uint8_t> &image_data);
-  bool read_audio(const char *path, std::vector<uint8_t> &audio_data);
+  // Работа с директориями
+  std::vector<std::string> list_dir(const std::string &path);
+  std::vector<FileInfo> list_dir_detailed(const std::string &path);
+  bool create_dir(const std::string &path);
+  bool remove_dir(const std::string &path);
   
-  // Получение информации о карте
+  // Работа с файлами
+  bool file_exists(const std::string &path);
+  size_t get_file_size(const std::string &path);
+  bool remove_file(const std::string &path);
+  bool rename_file(const std::string &old_path, const std::string &new_path);
+  
+  // Чтение/запись файлов
+  std::string read_file(const std::string &path);
+  bool write_file(const std::string &path, const std::string &content, bool append = false);
+  std::vector<uint8_t> read_binary_file(const std::string &path);
+  bool write_binary_file(const std::string &path, const std::vector<uint8_t> &data, bool append = false);
+  
+  // Информация о карте
   uint64_t get_card_size();
-  uint64_t get_used_space();
   uint64_t get_free_space();
-  const char* get_card_type();
-  bool is_mounted() { return mounted_; }
+  uint64_t get_used_space();
+  float get_usage_percent();
+  std::string get_card_type();
+  std::string get_card_name();
+  uint32_t get_card_speed();
+  
+  // Утилиты
+  bool format_card();
+  bool test_card_speed(size_t test_size_kb = 1024);
+  void print_card_info();
+  
+  // Callback для событий
+  void add_on_mount_callback(std::function<void()> &&callback) { 
+    this->on_mount_callbacks_.add(std::move(callback)); 
+  }
+  void add_on_unmount_callback(std::function<void()> &&callback) { 
+    this->on_unmount_callbacks_.add(std::move(callback)); 
+  }
 
  protected:
-  GPIOPin *clk_pin_{nullptr};
-  GPIOPin *cmd_pin_{nullptr};
-  GPIOPin *data0_pin_{nullptr};
-  GPIOPin *data1_pin_{nullptr};
-  GPIOPin *data2_pin_{nullptr};
-  GPIOPin *data3_pin_{nullptr};
-  
-  std::string mount_point_{"/sdcard"};
-  uint8_t bus_width_{4};
-  uint32_t max_freq_khz_{20000};
-  bool mounted_{false};
-  
-#ifdef ESP_PLATFORM
-  sdmmc_card_t *card_{nullptr};
-#endif
+  InternalGPIOPin *clk_pin_{nullptr};
+  InternalGPIOPin *cmd_pin_{nullptr};
+  InternalGPIOPin *data0_pin_{nullptr};
+  InternalGPIOPin *data1_pin_{nullptr};
+  InternalGPIOPin *data2_pin_{nullptr};
+  InternalGPIOPin *data3_pin_{nullptr};
 
+  std::string mount_point_{"/sdcard"};
+  BusWidth bus_width_{BusWidth::BUS_WIDTH_4};
+  uint32_t max_freq_khz_{20000};
+  bool is_mounted_{false};
+  bool mount_failed_{false};
+
+  void *card_{nullptr};  // Указатель на sdmmc_card_t
+  
+  CallbackManager<void()> on_mount_callbacks_;
+  CallbackManager<void()> on_unmount_callbacks_;
+  
+  // Внутренние методы
   bool mount_card_();
   void unmount_card_();
-  std::string get_full_path_(const char *path);
+  std::string get_full_path_(const std::string &path);
 };
 
 }  // namespace sd_card_esp32p4

@@ -1,11 +1,16 @@
-#include "sd_card.h"
+#include "sdcard.h"
+#include "esphome/core/log.h"
 
-#ifdef ESP_PLATFORM
+#ifdef USE_ESP32
+
+#include <esp_vfs_fat.h>
+#include <sdmmc_cmd.h>
+#include <driver/sdmmc_host.h>
 #include <sys/stat.h>
 #include <sys/unistd.h>
-#include "esp_err.h"
-#include "driver/gpio.h"
-#endif
+#include <dirent.h>
+#include <cstring>
+#include <ctime>
 
 namespace esphome {
 namespace sd_card_esp32p4 {
@@ -13,157 +18,274 @@ namespace sd_card_esp32p4 {
 static const char *const TAG = "sd_card_esp32p4";
 
 void SDCardComponent::setup() {
-  ESP_LOGCONFIG(TAG, "Setting up SD Card (SDMMC mode)...");
+  ESP_LOGCONFIG(TAG, "Setting up SD Card...");
   
-  if (this->mount_card_()) {
-    ESP_LOGI(TAG, "SD Card mounted successfully");
-    this->mounted_ = true;
-  } else {
-    ESP_LOGE(TAG, "Failed to mount SD Card");
+  if (!this->clk_pin_ || !this->cmd_pin_ || !this->data0_pin_) {
+    ESP_LOGE(TAG, "Required pins not configured!");
     this->mark_failed();
+    return;
   }
+
+  if (this->bus_width_ == BusWidth::BUS_WIDTH_4) {
+    if (!this->data1_pin_ || !this->data2_pin_ || !this->data3_pin_) {
+      ESP_LOGE(TAG, "4-bit mode requires DATA1, DATA2, DATA3 pins!");
+      this->mark_failed();
+      return;
+    }
+  }
+
+  this->mount_card_();
 }
 
 void SDCardComponent::loop() {
-  // Можно добавить периодическую проверку состояния
-}
-
-void SDCardComponent::dump_config() {
-  ESP_LOGCONFIG(TAG, "SD Card ESP32-P4 (SDMMC):");
-  LOG_PIN("  CLK Pin: ", this->clk_pin_);
-  LOG_PIN("  CMD Pin: ", this->cmd_pin_);
-  LOG_PIN("  DATA0 Pin: ", this->data0_pin_);
-  if (this->bus_width_ == 4) {
-    LOG_PIN("  DATA1 Pin: ", this->data1_pin_);
-    LOG_PIN("  DATA2 Pin: ", this->data2_pin_);
-    LOG_PIN("  DATA3 Pin: ", this->data3_pin_);
-  }
-  ESP_LOGCONFIG(TAG, "  Mount Point: %s", this->mount_point_.c_str());
-  ESP_LOGCONFIG(TAG, "  Bus Width: %d-bit", this->bus_width_);
-  ESP_LOGCONFIG(TAG, "  Max Frequency: %d kHz", this->max_freq_khz_);
-  ESP_LOGCONFIG(TAG, "  Status: %s", this->mounted_ ? "Mounted" : "Not Mounted");
-  
-  if (this->mounted_) {
-    ESP_LOGCONFIG(TAG, "  Card Type: %s", this->get_card_type());
-    ESP_LOGCONFIG(TAG, "  Card Size: %.2f GB", this->get_card_size() / (1024.0 * 1024.0 * 1024.0));
-    ESP_LOGCONFIG(TAG, "  Used Space: %.2f MB", this->get_used_space() / (1024.0 * 1024.0));
-    ESP_LOGCONFIG(TAG, "  Free Space: %.2f MB", this->get_free_space() / (1024.0 * 1024.0));
-  }
+  // Можно добавить периодическую проверку статуса карты
 }
 
 bool SDCardComponent::mount_card_() {
-#ifdef ESP_PLATFORM
-  esp_err_t ret;
-  
-  // Настройка SDMMC хоста
+  // Конфигурация хоста
   sdmmc_host_t host = SDMMC_HOST_DEFAULT();
   host.max_freq_khz = this->max_freq_khz_;
-  
-  // Настройка пинов для SDMMC
+
+  // Конфигурация слота
   sdmmc_slot_config_t slot_config = SDMMC_SLOT_CONFIG_DEFAULT();
   
-  // Устанавливаем ширину шины
-  if (this->bus_width_ == 1) {
+  // Установка ширины шины
+  if (this->bus_width_ == BusWidth::BUS_WIDTH_1) {
     slot_config.width = 1;
+    ESP_LOGCONFIG(TAG, "Using 1-bit bus width");
   } else {
     slot_config.width = 4;
+    ESP_LOGCONFIG(TAG, "Using 4-bit bus width");
   }
-  
-  // Настройка пинов
+
+  // Установка пинов
   slot_config.clk = (gpio_num_t)this->clk_pin_->get_pin();
   slot_config.cmd = (gpio_num_t)this->cmd_pin_->get_pin();
   slot_config.d0 = (gpio_num_t)this->data0_pin_->get_pin();
   
-  if (this->bus_width_ == 4) {
+  if (this->bus_width_ == BusWidth::BUS_WIDTH_4) {
     slot_config.d1 = (gpio_num_t)this->data1_pin_->get_pin();
     slot_config.d2 = (gpio_num_t)this->data2_pin_->get_pin();
     slot_config.d3 = (gpio_num_t)this->data3_pin_->get_pin();
   }
-  
-  // Отключаем внутренние подтяжки (если у вас есть внешние)
-  slot_config.flags |= SDMMC_SLOT_FLAG_INTERNAL_PULLUP;
-  
-  // Настройка монтирования
+
+  // Дополнительные настройки слота
+  slot_config.flags = SDMMC_SLOT_FLAG_INTERNAL_PULLUP;
+
+  // Конфигурация монтирования
   esp_vfs_fat_sdmmc_mount_config_t mount_config = {
-    .format_if_mount_failed = false,
-    .max_files = 10,
-    .allocation_unit_size = 16 * 1024,
-    .disk_status_check_enable = false
+      .format_if_mount_failed = false,
+      .max_files = 10,
+      .allocation_unit_size = 16 * 1024,
+      .disk_status_check_enable = false
   };
-  
-  ESP_LOGI(TAG, "Mounting SD card...");
-  ESP_LOGI(TAG, "  CLK: GPIO%d", slot_config.clk);
-  ESP_LOGI(TAG, "  CMD: GPIO%d", slot_config.cmd);
-  ESP_LOGI(TAG, "  D0:  GPIO%d", slot_config.d0);
-  if (this->bus_width_ == 4) {
-    ESP_LOGI(TAG, "  D1:  GPIO%d", slot_config.d1);
-    ESP_LOGI(TAG, "  D2:  GPIO%d", slot_config.d2);
-    ESP_LOGI(TAG, "  D3:  GPIO%d", slot_config.d3);
-  }
-  
-  // Монтирование карты через SDMMC
-  ret = esp_vfs_fat_sdmmc_mount(
-    this->mount_point_.c_str(),
-    &host,
-    &slot_config,
-    &mount_config,
-    &this->card_
+
+  sdmmc_card_t *card;
+  esp_err_t ret = esp_vfs_fat_sdmmc_mount(
+      this->mount_point_.c_str(), 
+      &host, 
+      &slot_config, 
+      &mount_config, 
+      &card
   );
-  
+
   if (ret != ESP_OK) {
     if (ret == ESP_FAIL) {
-      ESP_LOGE(TAG, "Failed to mount filesystem. "
-               "If you want the card to be formatted, set format_if_mount_failed = true.");
+      ESP_LOGE(TAG, "Failed to mount filesystem. Is SD card formatted?");
+    } else if (ret == ESP_ERR_TIMEOUT) {
+      ESP_LOGE(TAG, "SD card initialization timeout");
     } else if (ret == ESP_ERR_INVALID_STATE) {
-      ESP_LOGE(TAG, "SD card already mounted");
+      ESP_LOGE(TAG, "SD card in invalid state");
     } else {
-      ESP_LOGE(TAG, "Failed to initialize SD card (%s). "
-               "Make sure SD card lines have pull-up resistors in place.", 
-               esp_err_to_name(ret));
+      ESP_LOGE(TAG, "Failed to initialize SD card: %s (0x%x)", esp_err_to_name(ret), ret);
     }
+    this->mount_failed_ = true;
+    this->mark_failed();
     return false;
   }
-  
+
+  this->card_ = card;
+  this->is_mounted_ = true;
+  this->mount_failed_ = false;
+
   // Вывод информации о карте
-  ESP_LOGI(TAG, "SD card mounted successfully");
-  sdmmc_card_print_info(stdout, this->card_);
+  ESP_LOGI(TAG, "✓ SD Card mounted successfully!");
+  this->print_card_info();
+  
+  // Вызов callback'ов
+  this->on_mount_callbacks_.call();
   
   return true;
-#else
-  ESP_LOGE(TAG, "SD Card support only available on ESP32 platform");
-  return false;
-#endif
 }
 
 void SDCardComponent::unmount_card_() {
-#ifdef ESP_PLATFORM
-  if (this->mounted_) {
-    esp_vfs_fat_sdcard_unmount(this->mount_point_.c_str(), this->card_);
-    this->mounted_ = false;
+  if (this->is_mounted_) {
+    esp_vfs_fat_sdcard_unmount(this->mount_point_.c_str(), static_cast<sdmmc_card_t*>(this->card_));
+    this->is_mounted_ = false;
+    this->card_ = nullptr;
+    
     ESP_LOGI(TAG, "SD Card unmounted");
+    this->on_unmount_callbacks_.call();
   }
-#endif
 }
 
-std::string SDCardComponent::get_full_path_(const char *path) {
-  if (path[0] == '/') {
-    return this->mount_point_ + std::string(path);
-  }
-  return this->mount_point_ + "/" + std::string(path);
-}
-
-bool SDCardComponent::file_exists(const char *path) {
-  if (!this->mounted_) return false;
+void SDCardComponent::dump_config() {
+  ESP_LOGCONFIG(TAG, "SD Card ESP32-P4:");
+  ESP_LOGCONFIG(TAG, "  Mount Point: %s", this->mount_point_.c_str());
+  ESP_LOGCONFIG(TAG, "  Bus Width: %d-bit", static_cast<int>(this->bus_width_));
+  ESP_LOGCONFIG(TAG, "  Max Frequency: %d kHz", this->max_freq_khz_);
   
-  std::string full_path = this->get_full_path_(path);
+  LOG_PIN("  CLK Pin: ", this->clk_pin_);
+  LOG_PIN("  CMD Pin: ", this->cmd_pin_);
+  LOG_PIN("  DATA0 Pin: ", this->data0_pin_);
+  
+  if (this->bus_width_ == BusWidth::BUS_WIDTH_4) {
+    LOG_PIN("  DATA1 Pin: ", this->data1_pin_);
+    LOG_PIN("  DATA2 Pin: ", this->data2_pin_);
+    LOG_PIN("  DATA3 Pin: ", this->data3_pin_);
+  }
+  
+  if (this->mount_failed_) {
+    ESP_LOGCONFIG(TAG, "  Status: Mount Failed ✗");
+  } else if (this->is_mounted_) {
+    ESP_LOGCONFIG(TAG, "  Status: Mounted ✓");
+    ESP_LOGCONFIG(TAG, "  Card Name: %s", get_card_name().c_str());
+    ESP_LOGCONFIG(TAG, "  Card Type: %s", get_card_type().c_str());
+    ESP_LOGCONFIG(TAG, "  Card Speed: %d kHz", get_card_speed());
+    ESP_LOGCONFIG(TAG, "  Card Size: %.2f GB", get_card_size() / (1024.0 * 1024.0 * 1024.0));
+    ESP_LOGCONFIG(TAG, "  Free Space: %.2f GB", get_free_space() / (1024.0 * 1024.0 * 1024.0));
+    ESP_LOGCONFIG(TAG, "  Used Space: %.2f GB", get_used_space() / (1024.0 * 1024.0 * 1024.0));
+    ESP_LOGCONFIG(TAG, "  Usage: %.1f%%", get_usage_percent());
+  } else {
+    ESP_LOGCONFIG(TAG, "  Status: Not Mounted");
+  }
+}
+
+std::string SDCardComponent::get_full_path_(const std::string &path) {
+  if (path.empty() || path[0] != '/') {
+    return this->mount_point_ + "/" + path;
+  }
+  return this->mount_point_ + path;
+}
+
+// ==================== Работа с директориями ====================
+
+std::vector<std::string> SDCardComponent::list_dir(const std::string &path) {
+  std::vector<std::string> files;
+  
+  if (!this->is_mounted_) {
+    ESP_LOGW(TAG, "SD Card not mounted");
+    return files;
+  }
+
+  std::string full_path = get_full_path_(path);
+  DIR *dir = opendir(full_path.c_str());
+  
+  if (!dir) {
+    ESP_LOGE(TAG, "Failed to open directory: %s", full_path.c_str());
+    return files;
+  }
+
+  struct dirent *entry;
+  while ((entry = readdir(dir)) != nullptr) {
+    // Пропускаем . и ..
+    if (strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) {
+      files.push_back(entry->d_name);
+    }
+  }
+  
+  closedir(dir);
+  return files;
+}
+
+std::vector<FileInfo> SDCardComponent::list_dir_detailed(const std::string &path) {
+  std::vector<FileInfo> files;
+  
+  if (!this->is_mounted_) {
+    ESP_LOGW(TAG, "SD Card not mounted");
+    return files;
+  }
+
+  std::string full_path = get_full_path_(path);
+  DIR *dir = opendir(full_path.c_str());
+  
+  if (!dir) {
+    ESP_LOGE(TAG, "Failed to open directory: %s", full_path.c_str());
+    return files;
+  }
+
+  struct dirent *entry;
+  while ((entry = readdir(dir)) != nullptr) {
+    if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+      continue;
+    }
+    
+    FileInfo info;
+    info.name = entry->d_name;
+    
+    std::string item_path = full_path + "/" + entry->d_name;
+    struct stat st;
+    if (stat(item_path.c_str(), &st) == 0) {
+      info.size = st.st_size;
+      info.is_directory = S_ISDIR(st.st_mode);
+      info.modified_time = st.st_mtime;
+    } else {
+      info.size = 0;
+      info.is_directory = false;
+      info.modified_time = 0;
+    }
+    
+    files.push_back(info);
+  }
+  
+  closedir(dir);
+  return files;
+}
+
+bool SDCardComponent::create_dir(const std::string &path) {
+  if (!this->is_mounted_) return false;
+  
+  std::string full_path = get_full_path_(path);
+  int ret = mkdir(full_path.c_str(), 0755);
+  
+  if (ret != 0) {
+    ESP_LOGE(TAG, "Failed to create directory: %s", full_path.c_str());
+    return false;
+  }
+  
+  ESP_LOGI(TAG, "Created directory: %s", path.c_str());
+  return true;
+}
+
+bool SDCardComponent::remove_dir(const std::string &path) {
+  if (!this->is_mounted_) return false;
+  
+  std::string full_path = get_full_path_(path);
+  int ret = rmdir(full_path.c_str());
+  
+  if (ret != 0) {
+    ESP_LOGE(TAG, "Failed to remove directory: %s", full_path.c_str());
+    return false;
+  }
+  
+  ESP_LOGI(TAG, "Removed directory: %s", path.c_str());
+  return true;
+}
+
+// ==================== Работа с файлами ====================
+
+bool SDCardComponent::file_exists(const std::string &path) {
+  if (!this->is_mounted_) return false;
+  
+  std::string full_path = get_full_path_(path);
   struct stat st;
-  return (stat(full_path.c_str(), &st) == 0);
+  return stat(full_path.c_str(), &st) == 0 && S_ISREG(st.st_mode);
 }
 
-size_t SDCardComponent::get_file_size(const char *path) {
-  if (!this->mounted_) return 0;
+size_t SDCardComponent::get_file_size(const std::string &path) {
+  if (!this->is_mounted_) return 0;
   
-  std::string full_path = this->get_full_path_(path);
+  std::string full_path = get_full_path_(path);
   struct stat st;
   if (stat(full_path.c_str(), &st) == 0) {
     return st.st_size;
@@ -171,270 +293,259 @@ size_t SDCardComponent::get_file_size(const char *path) {
   return 0;
 }
 
-bool SDCardComponent::read_file(const char *path, std::vector<uint8_t> &data) {
-  if (!this->mounted_) {
-    ESP_LOGE(TAG, "SD Card not mounted");
+bool SDCardComponent::remove_file(const std::string &path) {
+  if (!this->is_mounted_) return false;
+  
+  std::string full_path = get_full_path_(path);
+  int ret = unlink(full_path.c_str());
+  
+  if (ret != 0) {
+    ESP_LOGE(TAG, "Failed to remove file: %s", full_path.c_str());
     return false;
   }
   
-  std::string full_path = this->get_full_path_(path);
+  ESP_LOGI(TAG, "Removed file: %s", path.c_str());
+  return true;
+}
+
+bool SDCardComponent::rename_file(const std::string &old_path, const std::string &new_path) {
+  if (!this->is_mounted_) return false;
   
-  FILE *file = fopen(full_path.c_str(), "rb");
-  if (file == nullptr) {
-    ESP_LOGE(TAG, "Failed to open file: %s", full_path.c_str());
+  std::string full_old_path = get_full_path_(old_path);
+  std::string full_new_path = get_full_path_(new_path);
+  
+  int ret = rename(full_old_path.c_str(), full_new_path.c_str());
+  
+  if (ret != 0) {
+    ESP_LOGE(TAG, "Failed to rename file from %s to %s", old_path.c_str(), new_path.c_str());
     return false;
   }
   
-  // Получаем размер файла
+  ESP_LOGI(TAG, "Renamed file: %s -> %s", old_path.c_str(), new_path.c_str());
+  return true;
+}
+
+// ==================== Чтение/запись файлов ====================
+
+std::string SDCardComponent::read_file(const std::string &path) {
+  if (!this->is_mounted_) return "";
+  
+  std::string full_path = get_full_path_(path);
+  FILE *file = fopen(full_path.c_str(), "r");
+  
+  if (!file) {
+    ESP_LOGE(TAG, "Failed to open file for reading: %s", full_path.c_str());
+    return "";
+  }
+  
   fseek(file, 0, SEEK_END);
   long file_size = ftell(file);
   fseek(file, 0, SEEK_SET);
   
-  if (file_size <= 0) {
-    fclose(file);
-    ESP_LOGE(TAG, "Invalid file size: %ld", file_size);
-    return false;
-  }
+  std::string content;
+  content.resize(file_size);
   
-  // Читаем файл
-  data.resize(file_size);
-  size_t bytes_read = fread(data.data(), 1, file_size, file);
+  size_t read_size = fread(&content[0], 1, file_size, file);
   fclose(file);
   
-  if (bytes_read != (size_t)file_size) {
-    ESP_LOGE(TAG, "Failed to read complete file. Expected: %ld, Read: %d", file_size, bytes_read);
+  if (read_size != (size_t)file_size) {
+    ESP_LOGW(TAG, "Read size mismatch for file: %s", path.c_str());
+  }
+  
+  return content;
+}
+
+bool SDCardComponent::write_file(const std::string &path, const std::string &content, bool append) {
+  if (!this->is_mounted_) return false;
+  
+  std::string full_path = get_full_path_(path);
+  const char *mode = append ? "a" : "w";
+  FILE *file = fopen(full_path.c_str(), mode);
+  
+  if (!file) {
+    ESP_LOGE(TAG, "Failed to open file for writing: %s", full_path.c_str());
     return false;
   }
   
-  ESP_LOGD(TAG, "Successfully read %d bytes from %s", bytes_read, path);
+  size_t written = fwrite(content.c_str(), 1, content.length(), file);
+  fclose(file);
+  
+  if (written != content.length()) {
+    ESP_LOGE(TAG, "Failed to write complete content to file: %s", path.c_str());
+    return false;
+  }
+  
+  ESP_LOGI(TAG, "Written %d bytes to file: %s", written, path.c_str());
   return true;
 }
 
-bool SDCardComponent::read_file_chunked(const char *path, std::function<bool(const uint8_t*, size_t)> callback, size_t chunk_size) {
-  if (!this->mounted_) {
-    ESP_LOGE(TAG, "SD Card not mounted");
-    return false;
-  }
+std::vector<uint8_t> SDCardComponent::read_binary_file(const std::string &path) {
+  std::vector<uint8_t> data;
   
-  std::string full_path = this->get_full_path_(path);
+  if (!this->is_mounted_) return data;
   
+  std::string full_path = get_full_path_(path);
   FILE *file = fopen(full_path.c_str(), "rb");
-  if (file == nullptr) {
-    ESP_LOGE(TAG, "Failed to open file: %s", full_path.c_str());
-    return false;
+  
+  if (!file) {
+    ESP_LOGE(TAG, "Failed to open file for reading: %s", full_path.c_str());
+    return data;
   }
   
-  std::vector<uint8_t> buffer(chunk_size);
-  size_t bytes_read;
-  bool success = true;
+  fseek(file, 0, SEEK_END);
+  long file_size = ftell(file);
+  fseek(file, 0, SEEK_SET);
   
-  while ((bytes_read = fread(buffer.data(), 1, chunk_size, file)) > 0) {
-    if (!callback(buffer.data(), bytes_read)) {
-      success = false;
-      break;
-    }
-  }
-  
+  data.resize(file_size);
+  size_t read_size = fread(data.data(), 1, file_size, file);
   fclose(file);
-  return success;
+  
+  if (read_size != (size_t)file_size) {
+    ESP_LOGW(TAG, "Read size mismatch for file: %s", path.c_str());
+    data.resize(read_size);
+  }
+  
+  return data;
 }
 
-bool SDCardComponent::write_file(const char *path, const uint8_t *data, size_t length) {
-  if (!this->mounted_) {
-    ESP_LOGE(TAG, "SD Card not mounted");
+bool SDCardComponent::write_binary_file(const std::string &path, const std::vector<uint8_t> &data, bool append) {
+  if (!this->is_mounted_) return false;
+  
+  std::string full_path = get_full_path_(path);
+  const char *mode = append ? "ab" : "wb";
+  FILE *file = fopen(full_path.c_str(), mode);
+  
+  if (!file) {
+    ESP_LOGE(TAG, "Failed to open file for writing: %s", full_path.c_str());
     return false;
   }
   
-  std::string full_path = this->get_full_path_(path);
-  
-  FILE *file = fopen(full_path.c_str(), "wb");
-  if (file == nullptr) {
-    ESP_LOGE(TAG, "Failed to create file: %s", full_path.c_str());
-    return false;
-  }
-  
-  size_t bytes_written = fwrite(data, 1, length, file);
+  size_t written = fwrite(data.data(), 1, data.size(), file);
   fclose(file);
   
-  if (bytes_written != length) {
-    ESP_LOGE(TAG, "Failed to write complete file. Expected: %d, Written: %d", length, bytes_written);
+  if (written != data.size()) {
+    ESP_LOGE(TAG, "Failed to write complete data to file: %s", path.c_str());
     return false;
   }
   
-  ESP_LOGD(TAG, "Successfully wrote %d bytes to %s", bytes_written, path);
+  ESP_LOGI(TAG, "Written %d bytes to file: %s", written, path.c_str());
   return true;
 }
 
-bool SDCardComponent::append_file(const char *path, const uint8_t *data, size_t length) {
-  if (!this->mounted_) {
-    ESP_LOGE(TAG, "SD Card not mounted");
-    return false;
-  }
-  
-  std::string full_path = this->get_full_path_(path);
-  
-  FILE *file = fopen(full_path.c_str(), "ab");
-  if (file == nullptr) {
-    ESP_LOGE(TAG, "Failed to open file for append: %s", full_path.c_str());
-    return false;
-  }
-  
-  size_t bytes_written = fwrite(data, 1, length, file);
-  fclose(file);
-  
-  return (bytes_written == length);
-}
-
-bool SDCardComponent::delete_file(const char *path) {
-  if (!this->mounted_) return false;
-  
-  std::string full_path = this->get_full_path_(path);
-  int result = unlink(full_path.c_str());
-  
-  if (result == 0) {
-    ESP_LOGD(TAG, "Deleted file: %s", path);
-    return true;
-  } else {
-    ESP_LOGE(TAG, "Failed to delete file: %s", path);
-    return false;
-  }
-}
-
-bool SDCardComponent::rename_file(const char *old_path, const char *new_path) {
-  if (!this->mounted_) return false;
-  
-  std::string full_old_path = this->get_full_path_(old_path);
-  std::string full_new_path = this->get_full_path_(new_path);
-  
-  int result = rename(full_old_path.c_str(), full_new_path.c_str());
-  
-  if (result == 0) {
-    ESP_LOGD(TAG, "Renamed file: %s -> %s", old_path, new_path);
-    return true;
-  } else {
-    ESP_LOGE(TAG, "Failed to rename file: %s -> %s", old_path, new_path);
-    return false;
-  }
-}
-
-bool SDCardComponent::create_directory(const char *path) {
-#ifdef ESP_PLATFORM
-  if (!this->mounted_) return false;
-  
-  std::string full_path = this->get_full_path_(path);
-  
-  // Используем FatFS API
-  FRESULT res = f_mkdir(full_path.c_str());
-  
-  if (res == FR_OK) {
-    ESP_LOGD(TAG, "Created directory: %s", path);
-    return true;
-  } else if (res == FR_EXIST) {
-    ESP_LOGD(TAG, "Directory already exists: %s", path);
-    return true;
-  } else {
-    ESP_LOGE(TAG, "Failed to create directory: %s (error: %d)", path, res);
-    return false;
-  }
-#else
-  return false;
-#endif
-}
-
-bool SDCardComponent::list_directory(const char *path, std::vector<FileInfo> &files) {
-#ifdef ESP_PLATFORM
-  if (!this->mounted_) return false;
-  
-  std::string full_path = this->get_full_path_(path);
-  files.clear();
-  
-  DIR dir;
-  FILINFO fno;
-  FRESULT res;
-  
-  res = f_opendir(&dir, full_path.c_str());
-  if (res != FR_OK) {
-    ESP_LOGE(TAG, "Failed to open directory: %s (error: %d)", path, res);
-    return false;
-  }
-  
-  while (true) {
-    res = f_readdir(&dir, &fno);
-    if (res != FR_OK || fno.fname[0] == 0) break;
-    
-    FileInfo info;
-    info.name = fno.fname;
-    info.size = fno.fsize;
-    info.is_directory = (fno.fattrib & AM_DIR) != 0;
-    
-    files.push_back(info);
-  }
-  
-  f_closedir(&dir);
-  ESP_LOGD(TAG, "Listed %d items in directory: %s", files.size(), path);
-  return true;
-#else
-  return false;
-#endif
-}
-
-bool SDCardComponent::read_image(const char *path, std::vector<uint8_t> &image_data) {
-  return this->read_file(path, image_data);
-}
-
-bool SDCardComponent::read_audio(const char *path, std::vector<uint8_t> &audio_data) {
-  return this->read_file(path, audio_data);
-}
+// ==================== Информация о карте ====================
 
 uint64_t SDCardComponent::get_card_size() {
-#ifdef ESP_PLATFORM
-  if (!this->mounted_ || this->card_ == nullptr) return 0;
-  return ((uint64_t)this->card_->csd.capacity) * this->card_->csd.sector_size;
-#else
-  return 0;
-#endif
+  if (!this->is_mounted_ || !this->card_) return 0;
+  
+  sdmmc_card_t *card = static_cast<sdmmc_card_t *>(this->card_);
+  return ((uint64_t)card->csd.capacity) * card->csd.sector_size;
 }
 
 uint64_t SDCardComponent::get_free_space() {
-#ifdef ESP_PLATFORM
-  if (!this->mounted_) return 0;
+  if (!this->is_mounted_) return 0;
   
   FATFS *fs;
   DWORD free_clusters;
-  FRESULT res;
   
-  res = f_getfree("0:", &free_clusters, &fs);
-  if (res != FR_OK) {
-    ESP_LOGE(TAG, "Failed to get free space (error: %d)", res);
-    return 0;
+  if (f_getfree("0:", &free_clusters, &fs) == FR_OK) {
+    return (uint64_t)free_clusters * fs->csize * 512;
   }
-  
-  uint64_t free_bytes = (uint64_t)free_clusters * fs->csize * fs->ssize;
-  return free_bytes;
-#else
   return 0;
-#endif
 }
 
 uint64_t SDCardComponent::get_used_space() {
-  uint64_t total = this->get_card_size();
-  uint64_t free = this->get_free_space();
-  return (total > free) ? (total - free) : 0;
+  return get_card_size() - get_free_space();
 }
 
-const char* SDCardComponent::get_card_type() {
-#ifdef ESP_PLATFORM
-  if (!this->mounted_ || this->card_ == nullptr) return "Unknown";
+float SDCardComponent::get_usage_percent() {
+  uint64_t total = get_card_size();
+  if (total == 0) return 0.0f;
   
-  if (this->card_->ocr & SD_OCR_SDHC_CAP) {
+  uint64_t used = get_used_space();
+  return (used * 100.0f) / total;
+}
+
+std::string SDCardComponent::get_card_type() {
+  if (!this->is_mounted_ || !this->card_) return "Unknown";
+  
+  sdmmc_card_t *card = static_cast<sdmmc_card_t *>(this->card_);
+  
+  if (card->ocr & SD_OCR_SDHC_CAP) {
     return "SDHC/SDXC";
   } else {
     return "SDSC";
   }
-#else
-  return "Unknown";
-#endif
+}
+
+std::string SDCardComponent::get_card_name() {
+  if (!this->is_mounted_ || !this->card_) return "Unknown";
+  
+  sdmmc_card_t *card = static_cast<sdmmc_card_t *>(this->card_);
+  return std::string(card->cid.name);
+}
+
+uint32_t SDCardComponent::get_card_speed() {
+  if (!this->is_mounted_ || !this->card_) return 0;
+  
+  sdmmc_card_t *card = static_cast<sdmmc_card_t *>(this->card_);
+  return card->max_freq_khz;
+}
+
+void SDCardComponent::print_card_info() {
+  if (!this->is_mounted_ || !this->card_) return;
+  
+  sdmmc_card_t *card = static_cast<sdmmc_card_t *>(this->card_);
+  sdmmc_card_print_info(stdout, card);
+}
+
+bool SDCardComponent::format_card() {
+  // Требует размонтирования и повторного монтирования
+  ESP_LOGW(TAG, "Format not implemented yet");
+  return false;
+}
+
+bool SDCardComponent::test_card_speed(size_t test_size_kb) {
+  if (!this->is_mounted_) return false;
+  
+  ESP_LOGI(TAG, "Testing SD card speed with %d KB...", test_size_kb);
+  
+  std::string test_file = "/speed_test.tmp";
+  std::vector<uint8_t> test_data(test_size_kb * 1024, 0xAA);
+  
+  // Тест записи
+  uint32_t start_time = millis();
+  bool write_ok = write_binary_file(test_file, test_data, false);
+  uint32_t write_time = millis() - start_time;
+  
+  if (!write_ok) {
+    ESP_LOGE(TAG, "Write test failed");
+    return false;
+  }
+  
+  float write_speed = (test_size_kb * 1000.0f) / write_time;  // KB/s
+  ESP_LOGI(TAG, "Write speed: %.2f KB/s", write_speed);
+  
+  // Тест чтения
+  start_time = millis();
+  auto read_data = read_binary_file(test_file);
+  uint32_t read_time = millis() - start_time;
+  
+  if (read_data.size() != test_data.size()) {
+    ESP_LOGE(TAG, "Read test failed");
+    remove_file(test_file);
+    return false;
+  }
+  
+  float read_speed = (test_size_kb * 1000.0f) / read_time;  // KB/s
+  ESP_LOGI(TAG, "Read speed: %.2f KB/s", read_speed);
+  
+  // Удаляем тестовый файл
+  remove_file(test_file);
+  
+  return true;
 }
 
 }  // namespace sd_card_esp32p4
 }  // namespace esphome
+
+#endif  // USE_ESP32
