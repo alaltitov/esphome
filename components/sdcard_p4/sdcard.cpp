@@ -466,16 +466,31 @@ float SDCardComponent::get_usage_percent() {
 }
 
 std::string SDCardComponent::get_card_type() {
-  if (!this->is_mounted_ || !this->card_) return "Unknown";
-  
+  if (!this->is_mounted_ || !this->card_) {
+    return "Unknown";
+  }
+
   sdmmc_card_t *card = static_cast<sdmmc_card_t *>(this->card_);
   
-  if (card->ocr & SD_OCR_SDHC_CAP) {
-    return "SDHC/SDXC";
+  // Проверяем тип карты через поле csd
+  if (card->is_sdio) {
+    return "SDIO";
+  } else if (card->is_mmc) {
+    return "MMC";
   } else {
-    return "SDSC";
+    // SD карта - проверяем версию
+    if (card->ocr & (1 << 30)) {  // Бит SDHC/SDXC
+      if (card->csd.capacity > 32 * 1024 * 1024 / 512) {
+        return "SDXC";
+      } else {
+        return "SDHC";
+      }
+    } else {
+      return "SDSC";
+    }
   }
 }
+
 
 std::string SDCardComponent::get_card_name() {
   if (!this->is_mounted_ || !this->card_) return "Unknown";
