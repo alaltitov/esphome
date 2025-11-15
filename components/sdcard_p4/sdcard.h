@@ -56,7 +56,11 @@ class SDCardComponent : public Component {
   bool is_mounted() const { return this->is_mounted_; }
   uint64_t get_card_size() const;
   uint64_t get_free_space() const;
-  std::string get_card_type();
+  uint64_t get_used_space() const;
+  float get_usage_percent() const;
+  std::string get_card_type() const;
+  std::string get_card_name() const;
+  uint32_t get_card_speed() const;
 
   // ============ File Operations ============
   bool file_exists(const std::string &path);
@@ -65,12 +69,22 @@ class SDCardComponent : public Component {
   std::string read_file(const std::string &path);
   bool delete_file(const std::string &path);
   bool rename_file(const std::string &old_path, const std::string &new_path);
+  size_t get_file_size(const std::string &path);
+  
+  // Binary file operations
+  std::vector<uint8_t> read_binary_file(const std::string &path);
+  bool write_binary_file(const std::string &path, const std::vector<uint8_t> &data, bool append = false);
 
   // ============ Directory Operations ============
   bool create_dir(const std::string &path);
   bool remove_dir(const std::string &path);
   std::vector<std::string> list_dir(const std::string &path);
   std::vector<FileInfo> list_dir_detailed(const std::string &path);
+
+  // ============ Advanced Operations ============
+  bool format_card();
+  bool test_card_speed(size_t test_size_kb = 512);
+  void print_card_info();
 
   // ============ Callbacks ============
   void add_on_mount_callback(std::function<void()> &&callback) {
@@ -101,6 +115,7 @@ class SDCardComponent : public Component {
 
   // ============ State ============
   bool is_mounted_{false};
+  bool mount_failed_{false};
   void *card_{nullptr};  // sdmmc_card_t pointer
 
   // ============ Callbacks ============
@@ -110,4 +125,3 @@ class SDCardComponent : public Component {
 
 }  // namespace sdcard_p4
 }  // namespace esphome
-

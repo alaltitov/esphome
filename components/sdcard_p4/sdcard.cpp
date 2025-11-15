@@ -13,21 +13,21 @@
 #include <ctime>
 
 namespace esphome {
-namespace sdcard_p4 {  // ✅ Изменён namespace
+namespace sdcard_p4 {
 
-static const char *const TAG = "sdcard_p4";  // ✅ Изменён TAG
+static const char *const TAG = "sdcard_p4";
 
 void SDCardComponent::setup() {
   ESP_LOGCONFIG(TAG, "Setting up SD Card...");
   
-  if (!this->clk_pin_ || !this->cmd_pin_ || !this->data0_pin_) {
+  if (this->clk_pin_ == 0 || this->cmd_pin_ == 0 || this->data0_pin_ == 0) {
     ESP_LOGE(TAG, "Required pins not configured!");
     this->mark_failed();
     return;
   }
 
-  if (this->bus_width_ == BusWidth::BUS_WIDTH_4) {
-    if (!this->data1_pin_ || !this->data2_pin_ || !this->data3_pin_) {
+  if (this->bus_width_ == 4) {
+    if (this->data1_pin_ == UINT8_MAX || this->data2_pin_ == UINT8_MAX || this->data3_pin_ == UINT8_MAX) {
       ESP_LOGE(TAG, "4-bit mode requires DATA1, DATA2, DATA3 pins!");
       this->mark_failed();
       return;
@@ -50,7 +50,7 @@ bool SDCardComponent::mount_card_() {
   sdmmc_slot_config_t slot_config = SDMMC_SLOT_CONFIG_DEFAULT();
   
   // Установка ширины шины
-  if (this->bus_width_ == BusWidth::BUS_WIDTH_1) {
+  if (this->bus_width_ == 1) {
     slot_config.width = 1;
     ESP_LOGCONFIG(TAG, "Using 1-bit bus width");
   } else {
@@ -58,15 +58,15 @@ bool SDCardComponent::mount_card_() {
     ESP_LOGCONFIG(TAG, "Using 4-bit bus width");
   }
 
-  // Установка пинов
-  slot_config.clk = (gpio_num_t)this->clk_pin_->get_pin();
-  slot_config.cmd = (gpio_num_t)this->cmd_pin_->get_pin();
-  slot_config.d0 = (gpio_num_t)this->data0_pin_->get_pin();
+  // Установка пинов (теперь используем uint8_t напрямую)
+  slot_config.clk = (gpio_num_t)this->clk_pin_;
+  slot_config.cmd = (gpio_num_t)this->cmd_pin_;
+  slot_config.d0 = (gpio_num_t)this->data0_pin_;
   
-  if (this->bus_width_ == BusWidth::BUS_WIDTH_4) {
-    slot_config.d1 = (gpio_num_t)this->data1_pin_->get_pin();
-    slot_config.d2 = (gpio_num_t)this->data2_pin_->get_pin();
-    slot_config.d3 = (gpio_num_t)this->data3_pin_->get_pin();
+  if (this->bus_width_ == 4) {
+    slot_config.d1 = (gpio_num_t)this->data1_pin_;
+    slot_config.d2 = (gpio_num_t)this->data2_pin_;
+    slot_config.d3 = (gpio_num_t)this->data3_pin_;
   }
 
   // Дополнительные настройки слота
@@ -132,17 +132,18 @@ void SDCardComponent::unmount_card_() {
 void SDCardComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "SD Card P4:");
   ESP_LOGCONFIG(TAG, "  Mount Point: %s", this->mount_point_.c_str());
-  ESP_LOGCONFIG(TAG, "  Bus Width: %d-bit", static_cast<int>(this->bus_width_));
+  ESP_LOGCONFIG(TAG, "  Bus Width: %d-bit", this->bus_width_);
   ESP_LOGCONFIG(TAG, "  Max Frequency: %d kHz", this->max_freq_khz_);
   
-  LOG_PIN("  CLK Pin: ", this->clk_pin_);
-  LOG_PIN("  CMD Pin: ", this->cmd_pin_);
-  LOG_PIN("  DATA0 Pin: ", this->data0_pin_);
+  // Логируем пины как числа
+  ESP_LOGCONFIG(TAG, "  CLK Pin: GPIO%d", this->clk_pin_);
+  ESP_LOGCONFIG(TAG, "  CMD Pin: GPIO%d", this->cmd_pin_);
+  ESP_LOGCONFIG(TAG, "  DATA0 Pin: GPIO%d", this->data0_pin_);
   
-  if (this->bus_width_ == BusWidth::BUS_WIDTH_4) {
-    LOG_PIN("  DATA1 Pin: ", this->data1_pin_);
-    LOG_PIN("  DATA2 Pin: ", this->data2_pin_);
-    LOG_PIN("  DATA3 Pin: ", this->data3_pin_);
+  if (this->bus_width_ == 4) {
+    ESP_LOGCONFIG(TAG, "  DATA1 Pin: GPIO%d", this->data1_pin_);
+    ESP_LOGCONFIG(TAG, "  DATA2 Pin: GPIO%d", this->data2_pin_);
+    ESP_LOGCONFIG(TAG, "  DATA3 Pin: GPIO%d", this->data3_pin_);
   }
   
   if (this->mount_failed_) {
@@ -293,18 +294,18 @@ size_t SDCardComponent::get_file_size(const std::string &path) {
   return 0;
 }
 
-bool SDCardComponent::remove_file(const std::string &path) {
+bool SDCardComponent::delete_file(const std::string &path) {
   if (!this->is_mounted_) return false;
   
   std::string full_path = get_full_path_(path);
   int ret = unlink(full_path.c_str());
   
   if (ret != 0) {
-    ESP_LOGE(TAG, "Failed to remove file: %s", full_path.c_str());
+    ESP_LOGE(TAG, "Failed to delete file: %s", full_path.c_str());
     return false;
   }
   
-  ESP_LOGI(TAG, "Removed file: %s", path.c_str());
+  ESP_LOGI(TAG, "Deleted file: %s", path.c_str());
   return true;
 }
 
@@ -355,12 +356,11 @@ std::string SDCardComponent::read_file(const std::string &path) {
   return content;
 }
 
-bool SDCardComponent::write_file(const std::string &path, const std::string &content, bool append) {
+bool SDCardComponent::write_file(const std::string &path, const std::string &content) {
   if (!this->is_mounted_) return false;
   
   std::string full_path = get_full_path_(path);
-  const char *mode = append ? "a" : "w";
-  FILE *file = fopen(full_path.c_str(), mode);
+  FILE *file = fopen(full_path.c_str(), "w");
   
   if (!file) {
     ESP_LOGE(TAG, "Failed to open file for writing: %s", full_path.c_str());
@@ -376,6 +376,29 @@ bool SDCardComponent::write_file(const std::string &path, const std::string &con
   }
   
   ESP_LOGI(TAG, "Written %d bytes to file: %s", written, path.c_str());
+  return true;
+}
+
+bool SDCardComponent::append_file(const std::string &path, const std::string &content) {
+  if (!this->is_mounted_) return false;
+  
+  std::string full_path = get_full_path_(path);
+  FILE *file = fopen(full_path.c_str(), "a");
+  
+  if (!file) {
+    ESP_LOGE(TAG, "Failed to open file for appending: %s", full_path.c_str());
+    return false;
+  }
+  
+  size_t written = fwrite(content.c_str(), 1, content.length(), file);
+  fclose(file);
+  
+  if (written != content.length()) {
+    ESP_LOGE(TAG, "Failed to append complete content to file: %s", path.c_str());
+    return false;
+  }
+  
+  ESP_LOGI(TAG, "Appended %d bytes to file: %s", written, path.c_str());
   return true;
 }
 
@@ -434,14 +457,14 @@ bool SDCardComponent::write_binary_file(const std::string &path, const std::vect
 
 // ==================== Информация о карте ====================
 
-uint64_t SDCardComponent::get_card_size() {
+uint64_t SDCardComponent::get_card_size() const {
   if (!this->is_mounted_ || !this->card_) return 0;
   
   sdmmc_card_t *card = static_cast<sdmmc_card_t *>(this->card_);
   return ((uint64_t)card->csd.capacity) * card->csd.sector_size;
 }
 
-uint64_t SDCardComponent::get_free_space() {
+uint64_t SDCardComponent::get_free_space() const {
   if (!this->is_mounted_) return 0;
   
   FATFS *fs;
@@ -453,11 +476,11 @@ uint64_t SDCardComponent::get_free_space() {
   return 0;
 }
 
-uint64_t SDCardComponent::get_used_space() {
+uint64_t SDCardComponent::get_used_space() const {
   return get_card_size() - get_free_space();
 }
 
-float SDCardComponent::get_usage_percent() {
+float SDCardComponent::get_usage_percent() const {
   uint64_t total = get_card_size();
   if (total == 0) return 0.0f;
   
@@ -465,14 +488,14 @@ float SDCardComponent::get_usage_percent() {
   return (used * 100.0f) / total;
 }
 
-std::string SDCardComponent::get_card_type() {
+std::string SDCardComponent::get_card_type() const {
   if (!this->is_mounted_ || !this->card_) {
     return "Unknown";
   }
 
   sdmmc_card_t *card = static_cast<sdmmc_card_t *>(this->card_);
   
-  // Проверяем тип карты через поле csd
+  // Проверяем тип карты
   if (card->is_sdio) {
     return "SDIO";
   } else if (card->is_mmc) {
@@ -491,15 +514,14 @@ std::string SDCardComponent::get_card_type() {
   }
 }
 
-
-std::string SDCardComponent::get_card_name() {
+std::string SDCardComponent::get_card_name() const {
   if (!this->is_mounted_ || !this->card_) return "Unknown";
   
   sdmmc_card_t *card = static_cast<sdmmc_card_t *>(this->card_);
   return std::string(card->cid.name);
 }
 
-uint32_t SDCardComponent::get_card_speed() {
+uint32_t SDCardComponent::get_card_speed() const {
   if (!this->is_mounted_ || !this->card_) return 0;
   
   sdmmc_card_t *card = static_cast<sdmmc_card_t *>(this->card_);
@@ -547,7 +569,7 @@ bool SDCardComponent::test_card_speed(size_t test_size_kb) {
   
   if (read_data.size() != test_data.size()) {
     ESP_LOGE(TAG, "Read test failed");
-    remove_file(test_file);
+    delete_file(test_file);
     return false;
   }
   
@@ -555,7 +577,7 @@ bool SDCardComponent::test_card_speed(size_t test_size_kb) {
   ESP_LOGI(TAG, "Read speed: %.2f KB/s", read_speed);
   
   // Удаляем тестовый файл
-  remove_file(test_file);
+  delete_file(test_file);
   
   return true;
 }
