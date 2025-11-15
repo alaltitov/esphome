@@ -84,7 +84,6 @@ CONFIG_SCHEMA = cv.All(
             ),
         }
     ).extend(cv.COMPONENT_SCHEMA),
-    validate_esp32_variant,
     validate_data_pins,
 )
 
