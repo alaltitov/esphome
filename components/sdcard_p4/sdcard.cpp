@@ -8,9 +8,11 @@
 #include <driver/sdmmc_host.h>
 #include <sys/stat.h>
 #include <sys/unistd.h>
-#include <dirent.h>
 #include <cstring>
 #include <ctime>
+
+// ✅ Используем ESP-IDF VFS API вместо POSIX
+#include <esp_vfs.h>
 
 namespace esphome {
 namespace sdcard_p4 {
@@ -58,7 +60,7 @@ bool SDCardComponent::mount_card_() {
     ESP_LOGCONFIG(TAG, "Using 4-bit bus width");
   }
 
-  // Установка пинов (теперь используем uint8_t напрямую)
+  // Установка пинов
   slot_config.clk = (gpio_num_t)this->clk_pin_;
   slot_config.cmd = (gpio_num_t)this->cmd_pin_;
   slot_config.d0 = (gpio_num_t)this->data0_pin_;
@@ -108,11 +110,9 @@ bool SDCardComponent::mount_card_() {
   this->is_mounted_ = true;
   this->mount_failed_ = false;
 
-  // Вывод информации о карте
   ESP_LOGI(TAG, "✓ SD Card mounted successfully!");
   this->print_card_info();
   
-  // Вызов callback'ов
   this->on_mount_callbacks_.call();
   
   return true;
@@ -135,7 +135,6 @@ void SDCardComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "  Bus Width: %d-bit", this->bus_width_);
   ESP_LOGCONFIG(TAG, "  Max Frequency: %d kHz", this->max_freq_khz_);
   
-  // Логируем пины как числа
   ESP_LOGCONFIG(TAG, "  CLK Pin: GPIO%d", this->clk_pin_);
   ESP_LOGCONFIG(TAG, "  CMD Pin: GPIO%d", this->cmd_pin_);
   ESP_LOGCONFIG(TAG, "  DATA0 Pin: GPIO%d", this->data0_pin_);
@@ -169,7 +168,7 @@ std::string SDCardComponent::get_full_path_(const std::string &path) {
   return this->mount_point_ + path;
 }
 
-// ==================== Работа с директориями ====================
+// ==================== Работа с директориями (ESP-IDF VFS) ====================
 
 std::vector<std::string> SDCardComponent::list_dir(const std::string &path) {
   std::vector<std::string> files;
@@ -180,22 +179,31 @@ std::vector<std::string> SDCardComponent::list_dir(const std::string &path) {
   }
 
   std::string full_path = get_full_path_(path);
-  DIR *dir = opendir(full_path.c_str());
   
-  if (!dir) {
-    ESP_LOGE(TAG, "Failed to open directory: %s", full_path.c_str());
+  // ✅ Используем ESP-IDF VFS API
+  struct stat st;
+  if (stat(full_path.c_str(), &st) != 0) {
+    ESP_LOGE(TAG, "Failed to stat directory: %s", full_path.c_str());
     return files;
   }
 
-  struct dirent *entry;
-  while ((entry = readdir(dir)) != nullptr) {
-    // Пропускаем . и ..
-    if (strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) {
-      files.push_back(entry->d_name);
+  // Простой способ - читаем через FILE API
+  DIR *dir = nullptr;
+  struct dirent *entry = nullptr;
+  
+  // Пробуем открыть через стандартный API (работает через VFS)
+  dir = opendir(full_path.c_str());
+  if (dir) {
+    while ((entry = readdir(dir)) != nullptr) {
+      if (strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) {
+        files.push_back(entry->d_name);
+      }
     }
+    closedir(dir);
+  } else {
+    ESP_LOGE(TAG, "Failed to open directory: %s", full_path.c_str());
   }
   
-  closedir(dir);
   return files;
 }
 
@@ -208,8 +216,8 @@ std::vector<FileInfo> SDCardComponent::list_dir_detailed(const std::string &path
   }
 
   std::string full_path = get_full_path_(path);
-  DIR *dir = opendir(full_path.c_str());
   
+  DIR *dir = opendir(full_path.c_str());
   if (!dir) {
     ESP_LOGE(TAG, "Failed to open directory: %s", full_path.c_str());
     return files;
@@ -247,10 +255,12 @@ bool SDCardComponent::create_dir(const std::string &path) {
   if (!this->is_mounted_) return false;
   
   std::string full_path = get_full_path_(path);
+  
+  // ✅ Используем mkdir через VFS
   int ret = mkdir(full_path.c_str(), 0755);
   
-  if (ret != 0) {
-    ESP_LOGE(TAG, "Failed to create directory: %s", full_path.c_str());
+  if (ret != 0 && errno != EEXIST) {
+    ESP_LOGE(TAG, "Failed to create directory: %s (errno: %d)", full_path.c_str(), errno);
     return false;
   }
   
@@ -262,10 +272,12 @@ bool SDCardComponent::remove_dir(const std::string &path) {
   if (!this->is_mounted_) return false;
   
   std::string full_path = get_full_path_(path);
+  
+  // ✅ Используем rmdir через VFS
   int ret = rmdir(full_path.c_str());
   
   if (ret != 0) {
-    ESP_LOGE(TAG, "Failed to remove directory: %s", full_path.c_str());
+    ESP_LOGE(TAG, "Failed to remove directory: %s (errno: %d)", full_path.c_str(), errno);
     return false;
   }
   
@@ -301,7 +313,7 @@ bool SDCardComponent::delete_file(const std::string &path) {
   int ret = unlink(full_path.c_str());
   
   if (ret != 0) {
-    ESP_LOGE(TAG, "Failed to delete file: %s", full_path.c_str());
+    ESP_LOGE(TAG, "Failed to delete file: %s (errno: %d)", full_path.c_str(), errno);
     return false;
   }
   
@@ -318,7 +330,7 @@ bool SDCardComponent::rename_file(const std::string &old_path, const std::string
   int ret = rename(full_old_path.c_str(), full_new_path.c_str());
   
   if (ret != 0) {
-    ESP_LOGE(TAG, "Failed to rename file from %s to %s", old_path.c_str(), new_path.c_str());
+    ESP_LOGE(TAG, "Failed to rename file from %s to %s (errno: %d)", old_path.c_str(), new_path.c_str(), errno);
     return false;
   }
   
@@ -375,7 +387,7 @@ bool SDCardComponent::write_file(const std::string &path, const std::string &con
     return false;
   }
   
-  ESP_LOGI(TAG, "Written %d bytes to file: %s", written, path.c_str());
+  ESP_LOGI(TAG, "Written %zu bytes to file: %s", written, path.c_str());
   return true;
 }
 
@@ -398,7 +410,7 @@ bool SDCardComponent::append_file(const std::string &path, const std::string &co
     return false;
   }
   
-  ESP_LOGI(TAG, "Appended %d bytes to file: %s", written, path.c_str());
+  ESP_LOGI(TAG, "Appended %zu bytes to file: %s", written, path.c_str());
   return true;
 }
 
@@ -451,7 +463,7 @@ bool SDCardComponent::write_binary_file(const std::string &path, const std::vect
     return false;
   }
   
-  ESP_LOGI(TAG, "Written %d bytes to file: %s", written, path.c_str());
+  ESP_LOGI(TAG, "Written %zu bytes to file: %s", written, path.c_str());
   return true;
 }
 
@@ -495,14 +507,12 @@ std::string SDCardComponent::get_card_type() const {
 
   sdmmc_card_t *card = static_cast<sdmmc_card_t *>(this->card_);
   
-  // Проверяем тип карты
   if (card->is_sdio) {
     return "SDIO";
   } else if (card->is_mmc) {
     return "MMC";
   } else {
-    // SD карта - проверяем версию
-    if (card->ocr & (1 << 30)) {  // Бит SDHC/SDXC
+    if (card->ocr & (1 << 30)) {
       if (card->csd.capacity > 32 * 1024 * 1024 / 512) {
         return "SDXC";
       } else {
@@ -536,7 +546,6 @@ void SDCardComponent::print_card_info() {
 }
 
 bool SDCardComponent::format_card() {
-  // Требует размонтирования и повторного монтирования
   ESP_LOGW(TAG, "Format not implemented yet");
   return false;
 }
@@ -544,12 +553,11 @@ bool SDCardComponent::format_card() {
 bool SDCardComponent::test_card_speed(size_t test_size_kb) {
   if (!this->is_mounted_) return false;
   
-  ESP_LOGI(TAG, "Testing SD card speed with %d KB...", test_size_kb);
+  ESP_LOGI(TAG, "Testing SD card speed with %zu KB...", test_size_kb);
   
   std::string test_file = "/speed_test.tmp";
   std::vector<uint8_t> test_data(test_size_kb * 1024, 0xAA);
   
-  // Тест записи
   uint32_t start_time = millis();
   bool write_ok = write_binary_file(test_file, test_data, false);
   uint32_t write_time = millis() - start_time;
@@ -559,10 +567,9 @@ bool SDCardComponent::test_card_speed(size_t test_size_kb) {
     return false;
   }
   
-  float write_speed = (test_size_kb * 1000.0f) / write_time;  // KB/s
+  float write_speed = (test_size_kb * 1000.0f) / write_time;
   ESP_LOGI(TAG, "Write speed: %.2f KB/s", write_speed);
   
-  // Тест чтения
   start_time = millis();
   auto read_data = read_binary_file(test_file);
   uint32_t read_time = millis() - start_time;
@@ -573,10 +580,9 @@ bool SDCardComponent::test_card_speed(size_t test_size_kb) {
     return false;
   }
   
-  float read_speed = (test_size_kb * 1000.0f) / read_time;  // KB/s
+  float read_speed = (test_size_kb * 1000.0f) / read_time;
   ESP_LOGI(TAG, "Read speed: %.2f KB/s", read_speed);
   
-  // Удаляем тестовый файл
   delete_file(test_file);
   
   return true;
