@@ -21,7 +21,7 @@ _LOGGER = logging.getLogger(__name__)
 # Component metadata
 DOMAIN = "sdcard_p4"
 CODEOWNERS = ["@alaltitov"]
-DEPENDENCIES = ["esp32"]
+DEPENDENCIES = []
 
 # C++ namespace and classes
 sdcard_p4_ns = cg.esphome_ns.namespace("sdcard_p4")

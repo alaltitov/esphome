@@ -54,6 +54,7 @@ class SDCardComponent : public Component {
 
   // ============ Status ============
   bool is_mounted() const { return this->is_mounted_; }
+  std::string get_mount_point() const { return this->mount_point_; }
   uint64_t get_card_size() const;
   uint64_t get_free_space() const;
   uint64_t get_used_space() const;
@@ -61,6 +62,7 @@ class SDCardComponent : public Component {
   std::string get_card_type() const;
   std::string get_card_name() const;
   uint32_t get_card_speed() const;
+
 
   // ============ File Operations ============
   bool file_exists(const std::string &path);
