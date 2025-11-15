@@ -75,17 +75,20 @@ CONFIG_SCHEMA = cv.All(
     cv.Schema(
         {
             cv.GenerateID(): cv.declare_id(SDCardComponent),
-            cv.Required(CONF_CLK_PIN): pins.gpio_output_pin_schema,
-            cv.Required(CONF_CMD_PIN): pins.gpio_output_pin_schema,
-            cv.Required(CONF_DATA0_PIN): pins.gpio_input_output_pin_schema,
-            cv.Optional(CONF_DATA1_PIN): pins.gpio_input_output_pin_schema,
-            cv.Optional(CONF_DATA2_PIN): pins.gpio_input_output_pin_schema,
-            cv.Optional(CONF_DATA3_PIN): pins.gpio_input_output_pin_schema,
-            cv.Optional(CONF_BUS_WIDTH): cv.All(
+            # CLK и CMD - output pins (возвращают номер пина)
+            cv.Required(CONF_CLK_PIN): pins.internal_gpio_output_pin_number,
+            cv.Required(CONF_CMD_PIN): pins.internal_gpio_output_pin_number,
+            # DATA пины - bidirectional (возвращают номер пина)
+            cv.Required(CONF_DATA0_PIN): pins.internal_gpio_pin_number,
+            cv.Optional(CONF_DATA1_PIN): pins.internal_gpio_pin_number,
+            cv.Optional(CONF_DATA2_PIN): pins.internal_gpio_pin_number,
+            cv.Optional(CONF_DATA3_PIN): pins.internal_gpio_pin_number,
+            # Bus configuration
+            cv.Optional(CONF_BUS_WIDTH, default=4): cv.All(
                 cv.int_range(min=1, max=4), validate_bus_width
             ),
-            cv.Optional(CONF_MOUNT_POINT): cv.string,
-            cv.Optional(CONF_MAX_FREQ_KHZ): cv.int_range(
+            cv.Optional(CONF_MOUNT_POINT, default="/sdcard"): cv.string,
+            cv.Optional(CONF_MAX_FREQ_KHZ, default=20000): cv.int_range(
                 min=400, max=40000
             ),
         }
@@ -105,43 +108,26 @@ async def to_code(config):
     cg.add_global(sdcard_p4_ns.using)
     cg.add_define("USE_SDCARD_P4")
 
-    # Configure CLK pin
-    clk = await cg.gpio_pin_expression(config[CONF_CLK_PIN])
-    cg.add(var.set_clk_pin(clk))
+    # Configure pins (internal pins - используем номера напрямую)
+    cg.add(var.set_clk_pin(config[CONF_CLK_PIN]))
+    cg.add(var.set_cmd_pin(config[CONF_CMD_PIN]))
+    cg.add(var.set_data0_pin(config[CONF_DATA0_PIN]))
 
-    # Configure CMD pin
-    cmd = await cg.gpio_pin_expression(config[CONF_CMD_PIN])
-    cg.add(var.set_cmd_pin(cmd))
+    # Configure DATA1-3 pins if bus_width == 4
+    if config[CONF_BUS_WIDTH] == 4:
+        cg.add(var.set_data1_pin(config[CONF_DATA1_PIN]))
+        cg.add(var.set_data2_pin(config[CONF_DATA2_PIN]))
+        cg.add(var.set_data3_pin(config[CONF_DATA3_PIN]))
 
-    # Configure DATA0 pin (always required)
-    data0 = await cg.gpio_pin_expression(config[CONF_DATA0_PIN])
-    cg.add(var.set_data0_pin(data0))
-
-    # Configure DATA1-3 pins (optional, depends on bus_width)
-    if CONF_DATA1_PIN in config:
-        data1 = await cg.gpio_pin_expression(config[CONF_DATA1_PIN])
-        cg.add(var.set_data1_pin(data1))
-
-    if CONF_DATA2_PIN in config:
-        data2 = await cg.gpio_pin_expression(config[CONF_DATA2_PIN])
-        cg.add(var.set_data2_pin(data2))
-
-    if CONF_DATA3_PIN in config:
-        data3 = await cg.gpio_pin_expression(config[CONF_DATA3_PIN])
-        cg.add(var.set_data3_pin(data3))
-
-    # Configure bus parameters with defaults
-    bus_width = config.get(CONF_BUS_WIDTH, 4)
-    mount_point = config.get(CONF_MOUNT_POINT, "/sdcard")
-    max_freq = config.get(CONF_MAX_FREQ_KHZ, 20000)
-    
-    cg.add(var.set_bus_width(bus_width))
-    cg.add(var.set_mount_point(mount_point))
-    cg.add(var.set_max_freq_khz(max_freq))
+    # Configure bus parameters
+    cg.add(var.set_bus_width(config[CONF_BUS_WIDTH]))
+    cg.add(var.set_mount_point(config[CONF_MOUNT_POINT]))
+    cg.add(var.set_max_freq_khz(config[CONF_MAX_FREQ_KHZ]))
 
     # Log configuration
     _LOGGER.info(
-        f"SD Card P4: {bus_width}-bit mode, {max_freq} kHz, mount at {mount_point}"
+        f"SD Card P4: {config[CONF_BUS_WIDTH]}-bit mode, "
+        f"{config[CONF_MAX_FREQ_KHZ]} kHz, mount at {config[CONF_MOUNT_POINT]}"
     )
 
     # Add required ESP-IDF components
@@ -150,4 +136,3 @@ async def to_code(config):
     
     # Add ESP-IDF libraries
     cg.add_library("ESP32", None, None)
-
