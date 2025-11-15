@@ -46,15 +46,6 @@ def validate_bus_width(value):
         raise cv.Invalid("bus_width must be 1 or 4")
     return value
 
-def validate_esp32_variant(config):
-    """Ensure component only runs on ESP32-P4."""
-    variant = CORE.data.get("esp32", {}).get("variant")
-    if variant != "esp32p4":
-        raise cv.Invalid(
-            f"This component only works with ESP32-P4 (current variant: {variant})"
-        )
-    return config
-
 def validate_data_pins(config):
     """Validate data pins based on bus width."""
     bus_width = config.get(CONF_BUS_WIDTH, 4)
