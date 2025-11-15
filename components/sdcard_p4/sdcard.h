@@ -7,7 +7,7 @@
 #include <string>
 
 namespace esphome {
-namespace sd_card_esp32p4 {
+namespace sdcard_p4 {  // ✅ Изменён namespace
 
 enum class BusWidth : uint8_t {
   BUS_WIDTH_1 = 1,
@@ -110,5 +110,5 @@ class SDCardComponent : public Component {
   std::string get_full_path_(const std::string &path);
 };
 
-}  // namespace sd_card_esp32p4
+}  // namespace sdcard_p4
 }  // namespace esphome

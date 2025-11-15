@@ -13,9 +13,9 @@
 #include <ctime>
 
 namespace esphome {
-namespace sd_card_esp32p4 {
+namespace sdcard_p4 {  // ✅ Изменён namespace
 
-static const char *const TAG = "sd_card_esp32p4";
+static const char *const TAG = "sdcard_p4";  // ✅ Изменён TAG
 
 void SDCardComponent::setup() {
   ESP_LOGCONFIG(TAG, "Setting up SD Card...");
@@ -130,7 +130,7 @@ void SDCardComponent::unmount_card_() {
 }
 
 void SDCardComponent::dump_config() {
-  ESP_LOGCONFIG(TAG, "SD Card ESP32-P4:");
+  ESP_LOGCONFIG(TAG, "SD Card P4:");
   ESP_LOGCONFIG(TAG, "  Mount Point: %s", this->mount_point_.c_str());
   ESP_LOGCONFIG(TAG, "  Bus Width: %d-bit", static_cast<int>(this->bus_width_));
   ESP_LOGCONFIG(TAG, "  Max Frequency: %d kHz", this->max_freq_khz_);
@@ -545,7 +545,7 @@ bool SDCardComponent::test_card_speed(size_t test_size_kb) {
   return true;
 }
 
-}  // namespace sd_card_esp32p4
+}  // namespace sdcard_p4
 }  // namespace esphome
 
 #endif  // USE_ESP32
