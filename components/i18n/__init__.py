@@ -327,8 +327,12 @@ async def to_code(config):
         data = _load_yaml_file(src)
         flat = {}
         _flatten_dict("", data, flat)
-        
-        locales_map[loc] = flat
+
+        if loc in locales_map:
+            _LOGGER.info("Updating locale %s (possibly overwriting) from %s", loc, src)
+            locales_map[loc].update(flat)
+        else:
+            locales_map[loc] = flat
         all_keys_set.update(flat.keys())
 
     all_keys = sorted(all_keys_set)
